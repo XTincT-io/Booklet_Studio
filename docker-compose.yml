@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: booklet
+      POSTGRES_PASSWORD: booklet
+      POSTGRES_DB: booklet_studio
+    ports:
+      - "5432:5432"
+    volumes:
+      - booklet_pgdata:/var/lib/postgresql/data
+
+volumes:
+  booklet_pgdata:

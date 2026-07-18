@@ -1,0 +1,158 @@
+// Booklet Studio — data model
+// Run `npx prisma generate` after `npm install`, then `npx prisma migrate dev` against a real Postgres instance.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  DESIGNER
+  COLLABORATOR
+  VIEWER
+}
+
+enum Tier {
+  FREE
+  INDIE_ARTIST
+  INDIE_LABEL
+  ENTERPRISE
+}
+
+enum ReleaseStatus {
+  DRAFT
+  IN_REVIEW
+  FINAL
+  LIVE
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  passwordHash String?
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+  comments     Comment[]
+}
+
+model Org {
+  id             String        @id @default(cuid())
+  name           String
+  tier           Tier          @default(FREE)
+  customDomain   String?
+  ssoEnabled     Boolean       @default(false)
+  stripeCustomerId String?
+  stripeSubscriptionId String?
+  createdAt      DateTime      @default(now())
+  memberships    Membership[]
+  projects       Project[]
+  assets         Asset[]
+  themePresets   ThemePreset[]
+  auditLogs      AuditLog[]
+}
+
+model Membership {
+  id      String @id @default(cuid())
+  role    Role   @default(VIEWER)
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId  String
+  org     Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId   String
+
+  @@unique([userId, orgId])
+}
+
+model Project {
+  id          String        @id @default(cuid())
+  name        String
+  artist      String?
+  formatId    String
+  status      ReleaseStatus @default(DRAFT)
+  releaseDate DateTime?
+  metadata    Json
+  theme       Json
+  org         Org           @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId       String
+  pages       Page[]
+  comments    Comment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([orgId])
+}
+
+model Page {
+  id        String  @id @default(cuid())
+  name      String
+  order     Int
+  blocks    Json
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+
+  @@index([projectId])
+}
+
+model Asset {
+  id        String   @id @default(cuid())
+  key       String
+  url       String
+  type      String
+  sizeBytes Int
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId     String
+  createdAt DateTime @default(now())
+
+  @@index([orgId])
+}
+
+model ThemePreset {
+  id    String @id @default(cuid())
+  name  String
+  data  Json
+  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId String
+
+  @@index([orgId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  body      String
+  pageId    String?
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  author    User     @relation(fields: [authorId], references: [id])
+  authorId  String
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  actorId   String
+  targetId  String?
+  meta      Json?
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId     String
+  createdAt DateTime @default(now())
+
+  @@index([orgId])
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  projectId String
+  pageId    String?
+  type      String
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+}
