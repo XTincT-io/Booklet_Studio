@@ -101,3 +101,53 @@ export interface ProjectSummary {
 export interface ProjectFull extends ProjectSummary {
   pages: PageData[];
 }
+
+export interface MemberSummary {
+  id: string; // membership id
+  role: RoleKey;
+  user: { id: string; email: string; name: string | null };
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  actorId: string;
+  targetId: string | null;
+  meta: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface ProjectAnalytics {
+  projectId: string;
+  projectName: string;
+  views: number;
+  hotspotOpens: number;
+  audioPlays: number;
+  last30DaysViews: { date: string; count: number }[];
+}
+
+export type JobStatusKey = "QUEUED" | "PROCESSING" | "DONE" | "FAILED";
+
+export interface ParseJobStatus {
+  id: string;
+  status: JobStatusKey;
+  resultText: string | null;
+  errorMessage: string | null;
+}
+
+export type ExportTypeKey = "PDF" | "WEB_BUNDLE" | "IMAGES";
+
+export interface ExportJobStatus {
+  id: string;
+  type: ExportTypeKey;
+  status: JobStatusKey;
+  resultUrl: string | null;
+  errorMessage: string | null;
+}
+
+export interface SsoConfigSummary {
+  issuer: string;
+  clientId: string;
+  defaultRole: RoleKey;
+  hasClientSecret: true;
+}

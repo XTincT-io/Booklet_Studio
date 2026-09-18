@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { db } from "@/lib/db";
+import { logAudit } from "@/lib/audit";
 import type { Tier } from "@prisma/client";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, { apiVersion: "2024-06-20" });
@@ -28,14 +29,17 @@ export async function POST(req: NextRequest) {
     const checkoutSession = event.data.object as Stripe.Checkout.Session;
     const orgId = checkoutSession.client_reference_id;
     const subscriptionId = checkoutSession.subscription as string | null;
+    const customerId = checkoutSession.customer as string | null;
 
     if (orgId && subscriptionId) {
       const tier = await tierFromSubscription(subscriptionId);
       if (tier) {
+        const previous = await db.org.findUnique({ where: { id: orgId } });
         await db.org.update({
           where: { id: orgId },
-          data: { tier, stripeSubscriptionId: subscriptionId },
+          data: { tier, stripeSubscriptionId: subscriptionId, ...(customerId ? { stripeCustomerId: customerId } : {}) },
         });
+        await logAudit({ orgId, actorId: "system:stripe_webhook", action: "org.tier_changed", meta: { from: previous?.tier, to: tier, via: "stripe_checkout" } });
       }
     }
   }
@@ -45,6 +49,7 @@ export async function POST(req: NextRequest) {
     const org = await db.org.findFirst({ where: { stripeSubscriptionId: sub.id } });
     if (org) {
       await db.org.update({ where: { id: org.id }, data: { tier: "FREE", stripeSubscriptionId: null } });
+      await logAudit({ orgId: org.id, actorId: "system:stripe_webhook", action: "org.tier_changed", meta: { from: org.tier, to: "FREE", via: "stripe_subscription_deleted" } });
     }
   }
 

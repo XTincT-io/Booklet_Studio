@@ -52,6 +52,10 @@ export default function SignupPage() {
       <p style={{ fontSize: 13, marginTop: 18 }}>
         Already have an account? <a href="/login" style={{ color: "#0a7" }}>Log in</a>
       </p>
+      <p style={{ fontSize: 12, color: "#9a9aa2", marginTop: 8 }}>
+        By creating an account you agree to our <a href="/terms" style={{ color: "#6b6b76" }}>Terms</a> and{" "}
+        <a href="/privacy" style={{ color: "#6b6b76" }}>Privacy Policy</a>.
+      </p>
     </main>
   );
 }

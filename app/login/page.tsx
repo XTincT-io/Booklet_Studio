@@ -34,6 +34,12 @@ export default function LoginPage() {
       <p style={{ fontSize: 13, marginTop: 18 }}>
         No account? <a href="/signup" style={{ color: "#0a7" }}>Sign up</a>
       </p>
+      <p style={{ fontSize: 13, marginTop: 8 }}>
+        Signing in with your company's identity provider? <a href="/login/sso" style={{ color: "#0a7" }}>Use SSO</a>
+      </p>
+      <p style={{ fontSize: 13, marginTop: 8 }}>
+        <a href="/forgot-password" style={{ color: "#6b6b76" }}>Forgot your password?</a>
+      </p>
     </main>
   );
 }

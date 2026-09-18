@@ -7,13 +7,14 @@ import {
   MousePointer2, Link2, Palette, Eye, EyeOff, Download, ChevronLeft,
   ChevronRight, Trash2, Copy, Layers as LayersIcon, Music, Settings,
   ChevronUp, ChevronDown, X, FileJson, Printer, Lock, ArrowLeft, ArrowRight,
-  Pause, Play, LogOut, type LucideIcon,
+  Pause, Play, LogOut, FileText, Globe, Images, type LucideIcon,
 } from "lucide-react";
-import { api, uploadFileToOrg, ApiError } from "@/lib/api-client";
+import { api, uploadFileToOrg, uploadFileToOrgWithKey, trackEvent, ApiError } from "@/lib/api-client";
 import type {
   OrgSummary, ProjectSummary, ProjectFull, PageData, BlockData,
   ThemeData, TierKey,
 } from "@/lib/types";
+import { OrgWorkspace } from "./OrgWorkspace";
 
 /* ---------------------------------------------------------------------- */
 /* Static reference data (mirrors the server's defaults)                   */
@@ -77,6 +78,9 @@ function makeHotspotBlock(): BlockData {
 function makeAudioBlock(src: string, label: string): BlockData {
   return { id: uid("blk"), type: "audio", x: 40, y: 40, w: 200, h: 56, z: 1, hidden: false, src, label };
 }
+function makeLyricsBlock(theme: ThemeData, content: string): BlockData {
+  return { id: uid("blk"), type: "text", x: 40, y: 40, w: 340, h: 420, z: 1, hidden: false, content, fontFamily: theme.fontBody, fontSize: 14, fontWeight: "400", color: theme.text, align: "left" };
+}
 
 function useDebounced<Args extends unknown[]>(fn: (...args: Args) => void | Promise<void>, delay: number) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -95,7 +99,7 @@ export default function BookletApp() {
   const [orgs, setOrgs] = useState<OrgSummary[]>([]);
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [view, setView] = useState<"loading" | "dashboard" | "editor">("loading");
+  const [view, setView] = useState<"loading" | "dashboard" | "editor" | "workspace">("loading");
   const [activeProject, setActiveProject] = useState<ProjectFull | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
@@ -205,11 +209,15 @@ export default function BookletApp() {
           onOpen={handleOpenProject}
           onPreview={handlePreviewProject}
           onDelete={handleDeleteProject}
+          onOpenWorkspace={() => setView("workspace")}
           onNew={() => {
             if (activeOrg && projects.length >= TIER_MAX_PROJECTS[activeOrg.tier]) setShowUpgradeModal(true);
             else setShowNewModal(true);
           }}
         />
+      )}
+      {view === "workspace" && activeOrg && (
+        <OrgWorkspace org={activeOrg} onBack={() => setView("dashboard")} onRequestUpgrade={() => setShowUpgradeModal(true)} />
       )}
       {view === "editor" && activeProject && activeOrg && (
         <Editor
@@ -243,7 +251,7 @@ export default function BookletApp() {
   );
 }
 
-const rootStyle: React.CSSProperties = { minHeight: "100vh", width: "100%", background: "var(--void-bg)", color: "var(--ash)", fontFamily: "var(--font-body)", position: "relative" };
+export const rootStyle: React.CSSProperties = { minHeight: "100vh", width: "100%", background: "var(--void-bg)", color: "var(--ash)", fontFamily: "var(--font-body)", position: "relative" };
 
 function GlobalStyle() {
   return (
@@ -275,10 +283,11 @@ function GlobalStyle() {
 /* ---------------------------------------------------------------------- */
 
 function Dashboard({
-  projects, org, userEmail, saveFlash, onOpen, onPreview, onDelete, onNew,
+  projects, org, userEmail, saveFlash, onOpen, onPreview, onDelete, onNew, onOpenWorkspace,
 }: {
   projects: ProjectSummary[]; org: OrgSummary | null; userEmail: string; saveFlash: boolean;
   onOpen: (id: string) => void; onPreview: (id: string) => void; onDelete: (id: string) => void; onNew: () => void;
+  onOpenWorkspace: () => void;
 }) {
   return (
     <div style={{ padding: "28px 32px", maxWidth: 1100, margin: "0 auto" }}>
@@ -290,6 +299,22 @@ function Dashboard({
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <SaveIndicator show={saveFlash} />
           {org && <TierBadge tier={org.tier} />}
+          {org && org.tier !== "FREE" && (
+            <button
+              onClick={async () => {
+                try {
+                  const { url } = await api.createBillingPortalSession(org.id);
+                  window.location.href = url;
+                } catch (e) {
+                  window.alert(e instanceof Error ? e.message : "Couldn't open the billing portal.");
+                }
+              }}
+              style={ghostBtnStyle}
+            >
+              Billing
+            </button>
+          )}
+          <button onClick={onOpenWorkspace} style={ghostBtnStyle}><Settings size={14} /> Team</button>
           <button onClick={onNew} style={primaryBtnStyle}><Plus size={15} /> New Release</button>
           <button onClick={() => signOut({ callbackUrl: "/login" })} title={userEmail} style={iconBtnStyle}><LogOut size={16} /></button>
         </div>
@@ -468,7 +493,9 @@ function Editor({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const lyricsInputRef = useRef<HTMLInputElement>(null);
   const pendingToolRef = useRef<"image" | "audio" | null>(null);
+  const [lyricsImporting, setLyricsImporting] = useState(false);
 
   useEffect(() => {
     const compute = () => setScale(Math.min(560 / format.w, 620 / format.h, 1));
@@ -543,6 +570,38 @@ function Editor({
     else if (tool === "hotspot") addBlock(makeHotspotBlock());
     else if (tool === "image") { pendingToolRef.current = "image"; fileInputRef.current?.click(); }
     else if (tool === "audio") { pendingToolRef.current = "audio"; audioInputRef.current?.click(); }
+    else if (tool === "lyrics") { lyricsInputRef.current?.click(); }
+  };
+
+  const handleLyricsFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLyricsImporting(true);
+    try {
+      const { key } = await uploadFileToOrgWithKey(org.id, file);
+      const { job } = await api.createParseJob(project.id, { key, filename: file.name, mimeType: file.type });
+
+      let status = job.status;
+      let resultText = job.resultText;
+      let errorMessage = job.errorMessage;
+      const startedAt = Date.now();
+      while (status === "QUEUED" || status === "PROCESSING") {
+        if (Date.now() - startedAt > 60_000) throw new Error("Text extraction is taking longer than expected — try again in a moment.");
+        await new Promise((r) => setTimeout(r, 1500));
+        const polled = await api.getParseJob(job.id);
+        status = polled.job.status;
+        resultText = polled.job.resultText;
+        errorMessage = polled.job.errorMessage;
+      }
+
+      if (status === "FAILED") throw new Error(errorMessage || "Couldn't extract text from that file.");
+      addBlock(makeLyricsBlock(theme, resultText || ""));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Lyric import failed.");
+    } finally {
+      setLyricsImporting(false);
+    }
   };
 
   const handleFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -633,6 +692,7 @@ function Editor({
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFileChosen} />
       <input ref={audioInputRef} type="file" accept="audio/*" style={{ display: "none" }} onChange={handleFileChosen} />
+      <input ref={lyricsInputRef} type="file" accept=".txt,.pdf,.docx,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" style={{ display: "none" }} onChange={handleLyricsFileChosen} />
 
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderBottom: "1px solid var(--void-border)", background: "var(--void-panel)" }}>
         <button onClick={onBack} style={iconBtnStyle} title="Back to dashboard"><Home size={16} /></button>
@@ -650,6 +710,7 @@ function Editor({
         <ToolButton icon={Square} label="Rectangle" onClick={() => handleToolClick("rect")} />
         <ToolButton icon={CircleIcon} label="Circle" onClick={() => handleToolClick("circle")} />
         <ToolButton icon={Link2} label="Hotspot" onClick={() => handleToolClick("hotspot")} />
+        <ToolButton icon={FileText} label={lyricsImporting ? "Importing…" : "Lyrics"} onClick={() => handleToolClick("lyrics")} />
         <div style={{ width: 1, height: 22, background: "var(--void-border)", margin: "0 6px" }} />
         <ToolButton icon={Palette} label="Theme" onClick={() => setRightPanel("theme")} active={rightPanel === "theme"} />
         <ToolButton icon={Settings} label="Details" onClick={() => setRightPanel("metadata")} active={rightPanel === "metadata"} />
@@ -657,7 +718,8 @@ function Editor({
           <SaveIndicator show={saveFlash} />
           <TierBadge tier={org.tier} />
           <button onClick={onPreview} style={ghostBtnStyle}><Eye size={14} /> Preview</button>
-          <ExportMenu onExportJSON={exportJSON} />
+          <ShareButton projectId={project.id} onError={onError} />
+          <ExportMenu onExportJSON={exportJSON} projectId={project.id} org={org} onRequestUpgrade={onRequestUpgrade} onError={(m) => onError(m)} />
         </div>
       </div>
 
@@ -740,19 +802,139 @@ function ToolButton({ icon: Icon, label, onClick, active }: { icon: LucideIcon; 
   return <button onClick={onClick} title={label} style={{ ...iconBtnStyle, background: active ? "var(--void-panel-2)" : "transparent", color: active ? "var(--signal-cyan)" : "var(--ash)" }}><Icon size={16} /></button>;
 }
 
-function ExportMenu({ onExportJSON }: { onExportJSON: () => void }) {
+function ShareButton({ projectId, onError }: { projectId: string; onError: (m: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const load = async () => {
+    try {
+      const status = await api.getPublishStatus(projectId);
+      setEnabled(status.publicEnabled);
+      setPublicUrl(status.publicUrl);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't load the share link.");
+    }
+  };
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const status = await api.setPublishStatus(projectId, !enabled);
+      setEnabled(status.publicEnabled);
+      setPublicUrl(status.publicUrl);
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Couldn't update the share link.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (!publicUrl) return;
+    navigator.clipboard.writeText(publicUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
   return (
     <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen((o) => !o)} style={primaryBtnStyle}><Download size={14} /> Export</button>
+      <button onClick={() => { setOpen((o) => !o); if (!open) load(); }} style={ghostBtnStyle}>
+        <Link2 size={14} /> Share
+      </button>
       {open && (
-        <div style={{ position: "absolute", right: 0, top: "110%", background: "var(--void-panel-2)", border: "1px solid var(--void-border)", borderRadius: 8, overflow: "hidden", zIndex: 20, minWidth: 190 }}>
-          <button onClick={() => { onExportJSON(); setOpen(false); }} style={menuItemStyle}><FileJson size={13} /> Export as JSON</button>
-          <button onClick={() => { window.print(); setOpen(false); }} style={menuItemStyle}><Printer size={13} /> Print / Save as PDF</button>
+        <div style={{ position: "absolute", right: 0, top: "110%", background: "var(--void-panel-2)", border: "1px solid var(--void-border)", borderRadius: 8, padding: 14, zIndex: 20, minWidth: 280 }}>
+          <div style={{ fontSize: 12, color: "var(--ash)", marginBottom: 10 }}>
+            Publishes a hosted, interactive link anyone can open — no account needed. Every plan includes this.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: enabled ? 10 : 0 }}>
+            <span style={{ fontSize: 13, color: "var(--ash-bright)" }}>{enabled ? "Live" : "Not published"}</span>
+            <button onClick={toggle} style={{ ...primaryBtnStyle, padding: "6px 12px", fontSize: 12 }} disabled={busy}>
+              {busy ? "…" : enabled ? "Unpublish" : "Publish"}
+            </button>
+          </div>
+          {enabled && publicUrl && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <input readOnly value={publicUrl} style={{ ...inputStyle, flex: 1, fontSize: 12 }} onFocus={(e) => e.target.select()} />
+              <button onClick={handleCopy} style={{ ...ghostBtnStyle, padding: "6px 10px" }}>{copied ? "Copied" : "Copy"}</button>
+            </div>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function ExportMenu({
+  onExportJSON, projectId, org, onRequestUpgrade, onError,
+}: {
+  onExportJSON: () => void; projectId: string; org: OrgSummary;
+  onRequestUpgrade: () => void; onError: (m: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [jobLabel, setJobLabel] = useState<string | null>(null); // e.g. "Rendering PDF…" — shown while a queued export is in flight
+
+  const runExport = async (type: "PDF" | "WEB_BUNDLE" | "IMAGES", label: string) => {
+    setOpen(false);
+    setJobLabel(`Rendering ${label}…`);
+    try {
+      const { job } = await api.createExportJob(projectId, type);
+      let status = job.status;
+      let resultUrl = job.resultUrl;
+      let errorMessage = job.errorMessage;
+      const startedAt = Date.now();
+      while (status === "QUEUED" || status === "PROCESSING") {
+        if (Date.now() - startedAt > 120_000) throw new Error(`${label} export is taking longer than expected — check back in a minute.`);
+        await new Promise((r) => setTimeout(r, 2000));
+        const polled = await api.getExportJob(job.id);
+        status = polled.job.status;
+        resultUrl = polled.job.resultUrl;
+        errorMessage = polled.job.errorMessage;
+      }
+      if (status === "FAILED") throw new Error(errorMessage || `${label} export failed.`);
+      if (resultUrl) window.open(resultUrl, "_blank");
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "TIER_LIMIT") onRequestUpgrade();
+      else onError(e instanceof Error ? e.message : `${label} export failed.`);
+    } finally {
+      setJobLabel(null);
+    }
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen((o) => !o)} style={primaryBtnStyle} disabled={!!jobLabel}>
+        <Download size={14} /> {jobLabel || "Export"}
+      </button>
+      {open && (
+        <div style={{ position: "absolute", right: 0, top: "110%", background: "var(--void-panel-2)", border: "1px solid var(--void-border)", borderRadius: 8, overflow: "hidden", zIndex: 20, minWidth: 230 }}>
+          <button onClick={() => { onExportJSON(); setOpen(false); }} style={menuItemStyle}><FileJson size={13} /> Export as JSON</button>
+          <button onClick={() => { window.print(); setOpen(false); }} style={menuItemStyle}><Printer size={13} /> Print / Save as PDF (browser)</button>
+          <div style={{ borderTop: "1px solid var(--void-border)" }} />
+          <button onClick={() => runExport("PDF", "PDF")} style={menuItemStyle}>
+            <FileJson size={13} /> High-quality PDF {!hasFeatureClient(org.tier, "hq_export") && <Lock size={11} style={{ marginLeft: "auto" }} />}
+          </button>
+          <button onClick={() => runExport("WEB_BUNDLE", "web bundle")} style={menuItemStyle}>
+            <Globe size={13} /> Embeddable web viewer (.zip) {!hasFeatureClient(org.tier, "embed_export") && <Lock size={11} style={{ marginLeft: "auto" }} />}
+          </button>
+          <button onClick={() => runExport("IMAGES", "image set")} style={menuItemStyle}>
+            <Images size={13} /> Page images (.zip) {!hasFeatureClient(org.tier, "social_export") && <Lock size={11} style={{ marginLeft: "auto" }} />}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Mirrors lib/entitlements.ts's feature matrix for a client-side lock icon only — the
+// export-jobs API independently re-checks entitlement server-side before enqueuing.
+function hasFeatureClient(tier: TierKey, feature: string): boolean {
+  const paidFeatures = ["hq_export", "embed_export", "social_export"];
+  if (!paidFeatures.includes(feature)) return true;
+  return tier !== "FREE";
 }
 
 /* ---------------------------------------------------------------------- */
@@ -933,6 +1115,11 @@ function PreviewViewer({ project, onClose }: { project: ProjectFull; onClose: ()
 
   const page = project.pages[pageIndex];
 
+  useEffect(() => {
+    if (page) trackEvent(project.id, page.id, "view");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page?.id]);
+
   const go = useCallback((dir: number) => {
     setActiveNote(null);
     setPageIndex((i) => Math.max(0, Math.min(project.pages.length - 1, i + dir)));
@@ -956,12 +1143,13 @@ function PreviewViewer({ project, onClose }: { project: ProjectFull; onClose: ()
       if (el) { el.currentTime = block.timestamp || 0; el.play(); setPlayingId(block.linkedAudioId); }
     }
     setActiveNote(block.note || null);
+    trackEvent(project.id, page?.id ?? null, "hotspot_open");
   };
 
   const toggleAudio = (block: Extract<BlockData, { type: "audio" }>) => {
     const el = audioRefs.current[block.id];
     if (!el) return;
-    if (playingId === block.id) { el.pause(); setPlayingId(null); } else { el.play(); setPlayingId(block.id); }
+    if (playingId === block.id) { el.pause(); setPlayingId(null); } else { el.play(); setPlayingId(block.id); trackEvent(project.id, page?.id ?? null, "audio_play"); }
   };
 
   if (!page) return null;
@@ -1016,9 +1204,9 @@ function PreviewViewer({ project, onClose }: { project: ProjectFull; onClose: ()
 /* Shared style tokens                                                     */
 /* ---------------------------------------------------------------------- */
 
-const primaryBtnStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, background: "var(--crt-amber)", color: "#141414", border: "none", borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 600 };
-const ghostBtnStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, background: "transparent", color: "var(--ash-bright)", border: "1px solid var(--void-border)", borderRadius: 6, padding: "8px 12px", fontSize: 12 };
-const iconBtnStyle: React.CSSProperties = { display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: 6, padding: 8, color: "var(--ash)" };
-const inputStyle: React.CSSProperties = { width: "100%", background: "var(--void-panel-2)", border: "1px solid var(--void-border)", borderRadius: 6, padding: "8px 10px", fontSize: 12, color: "var(--ash-bright)", outline: "none" };
-const labelStyle: React.CSSProperties = { fontSize: 11, color: "var(--ash)", textTransform: "uppercase", letterSpacing: 0.5 };
-const menuItemStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 12px", background: "transparent", border: "none", color: "var(--ash-bright)", fontSize: 12, textAlign: "left" };
+export const primaryBtnStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, background: "var(--crt-amber)", color: "#141414", border: "none", borderRadius: 6, padding: "8px 14px", fontSize: 13, fontWeight: 600 };
+export const ghostBtnStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 6, background: "transparent", color: "var(--ash-bright)", border: "1px solid var(--void-border)", borderRadius: 6, padding: "8px 12px", fontSize: 12 };
+export const iconBtnStyle: React.CSSProperties = { display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: 6, padding: 8, color: "var(--ash)" };
+export const inputStyle: React.CSSProperties = { width: "100%", background: "var(--void-panel-2)", border: "1px solid var(--void-border)", borderRadius: 6, padding: "8px 10px", fontSize: 12, color: "var(--ash-bright)", outline: "none" };
+export const labelStyle: React.CSSProperties = { fontSize: 11, color: "var(--ash)", textTransform: "uppercase", letterSpacing: 0.5 };
+export const menuItemStyle: React.CSSProperties = { display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 12px", background: "transparent", border: "none", color: "var(--ash-bright)", fontSize: 12, textAlign: "left" };

@@ -1,0 +1,30 @@
+# Production image for the worker process ONLY — consumes the BullMQ queues (document
+# parsing, PDF/image/web-bundle export). Deploy this as a separate long-running service
+# from the web app (Railway/Fly/ECS/a VM) — it is NOT compatible with typical serverless
+# Next.js hosts (e.g. Vercel), which don't support long-running background processes.
+#
+# Uses puppeteer's own bundled-Chromium image as a base so we don't have to hand-manage
+# the pile of native libraries headless Chromium needs on a bare Debian image.
+
+FROM ghcr.io/puppeteer/puppeteer:22.15.0
+
+WORKDIR /app
+USER root
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+# Puppeteer's base image already has Chromium; skip downloading a second copy.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN npm ci
+RUN npx prisma generate
+
+COPY . .
+
+RUN chown -R pptruser:pptruser /app
+USER pptruser
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
+  CMD node -e "process.exit(0)" || exit 1
+# ^ BullMQ workers have no HTTP endpoint to poll; this is a liveness stub only. For real
+# health signal, alert on Redis queue depth / stalled-job count instead (see docs/deployment.md).
+
+CMD ["npx", "tsx", "worker/index.ts"]

@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { canCreateProject } from "@/lib/entitlements";
+import { logAudit } from "@/lib/audit";
+import { parseBody, createProjectSchema } from "@/lib/validation";
 
 const FORMAT_PAGE_PRESETS: Record<string, string[]> = {
   blank: ["Page 1"],
@@ -36,9 +38,9 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json();
-  const { orgId, name, artist, formatId } = body as { orgId?: string; name?: string; artist?: string; formatId?: string };
-  if (!orgId || !formatId) return NextResponse.json({ error: "orgId and formatId are required" }, { status: 400 });
+  const parsed = await parseBody(req, createProjectSchema);
+  if ("error" in parsed) return parsed.error;
+  const { orgId, name, artist, formatId } = parsed.data;
 
   const membership = await db.membership.findUnique({
     where: { userId_orgId: { userId: session.user.id, orgId } },
@@ -85,6 +87,8 @@ export async function POST(req: NextRequest) {
     },
     include: { pages: true },
   });
+
+  await logAudit({ orgId, actorId: session.user.id, action: "project.created", targetId: project.id, meta: { name: project.name, formatId } });
 
   return NextResponse.json({ project }, { status: 201 });
 }
