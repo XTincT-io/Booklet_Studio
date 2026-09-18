@@ -178,13 +178,26 @@ Remaining polish, roughly in priority order:
   needed
 - **Legacy `.doc` files** (pre-2007 binary Word format) aren't supported for lyric import —
   `lib/parsing.ts` returns a friendly error asking for `.docx`/`.pdf`/`.txt` instead
-- **No automated tests yet.** `lib/entitlements.ts` (the tier-gating logic that directly
-  protects revenue) is the highest-value place to start.
 - **No account/org self-service deletion** — no GDPR "right to be forgotten" flow yet.
   `/privacy` calls this out as an open item rather than promising something that isn't built.
 - **No strict Content-Security-Policy** — the other security headers are in
   `next.config.js`, but a real CSP needs nonce wiring through the App Router's hydration
   scripts, which wasn't done blind without a way to verify it doesn't break the build.
+
+## Tests
+
+```bash
+npm run test
+```
+
+28 tests covering the modules that are pure enough to unit test without a live database:
+`lib/entitlements.ts` (tier-gating — the highest-value target, since it's what directly
+protects revenue), `lib/validation.ts` (every zod schema guarding a mutating/public route,
+including the one unauthenticated endpoint in the app), and `lib/parsing.ts`'s mime-type
+detection. Runs in CI on every push/PR. Everything with a real Postgres/S3/Redis
+dependency (API routes, the worker, SSO) still needs the manual smoke test in
+`docs/deployment.md` — that's the next place to extend coverage, likely with a test
+database and `supertest`-style route tests, if this grows further.
 
 ## Type-checking
 
