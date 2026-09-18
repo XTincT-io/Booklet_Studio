@@ -133,6 +133,33 @@ Gated responses return HTTP 402 with `{ error, code: "TIER_LIMIT" }`, which
 `lib/api-client.ts`'s `ApiError` surfaces with a `.code` property — the UI catches that
 specific code to show the upgrade modal rather than a generic error toast.
 
+## Known security exceptions
+
+**Next.js is intentionally pinned at 14.2.35, not upgraded to 16.x, despite two open advisories**
+(1 critical, 1 high — see `npm audit`; GitHub's Dependabot PR #1 on this repo proposes the
+same bump). This is a deliberate decision, not an oversight:
+
+- Neither advisory has a fix backported into the 14.x line — 14.2.35 is already the latest
+  patch release of the major version this app is built on.
+- `next-auth` v4 (used throughout this app — see `lib/auth.ts`, `middleware.ts`, and every
+  route calling `getServerSession`) has well-documented incompatibilities with Next.js 15+,
+  which moved `cookies()`/`headers()` to async APIs that v4's session handling predates.
+  A real fix means migrating to Auth.js v5 across roughly 21 files, which is a genuine
+  rewrite, not a version bump.
+- That migration needs to be done as its own dedicated effort with real end-to-end testing
+  (a live Postgres, actual login flows exercised) — not force-pushed on the assumption it
+  works, since getting it wrong breaks authentication for the entire app.
+
+**If you want to pick this up:** close or ignore Dependabot PR #1 as-is (merging it alone
+will break `next-auth`), and instead track "Next 16 + Auth.js v5 migration" as one deliberate
+piece of work. `Dockerfile`, the CI workflow, and `package.json`'s `engines` field are already
+on Node ≥22.12 (required by the Puppeteer bump below), so that part of the groundwork is done.
+
+**`puppeteer` was bumped 22→25** (fixed 4 of 6 `npm audit` findings — the `extract-zip`/
+`@puppeteer/browsers` chain) since this app only touches Puppeteer's most stable API surface
+(`launch`, `setViewport`, `setContent`, `page.pdf`, `elementHandle.screenshot`), which hasn't
+had breaking changes across these majors. `Dockerfile.worker`'s base image was bumped to match.
+
 ## What's next
 
 Everything in the original "What's next" list now has a working implementation — Label/

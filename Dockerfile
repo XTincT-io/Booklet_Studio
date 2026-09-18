@@ -1,7 +1,7 @@
 # Production image for the Next.js web app only — NOT the worker (see Dockerfile.worker).
 # The web app is stateless request/response; it never runs BullMQ jobs itself.
 
-FROM node:20-slim AS deps
+FROM node:22-slim AS deps
 WORKDIR /app
 # openssl is required by Prisma's query engine at runtime on Debian-based images
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
@@ -10,7 +10,7 @@ COPY prisma ./prisma
 RUN npm ci
 RUN npx prisma generate
 
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 WORKDIR /app
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/node_modules ./node_modules
@@ -20,7 +20,7 @@ ENV PUPPETEER_SKIP_DOWNLOAD=1
 RUN npx prisma generate
 RUN npm run build
 
-FROM node:20-slim AS runner
+FROM node:22-slim AS runner
 WORKDIR /app
 RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production

@@ -6,7 +6,7 @@
 # Uses puppeteer's own bundled-Chromium image as a base so we don't have to hand-manage
 # the pile of native libraries headless Chromium needs on a bare Debian image.
 
-FROM ghcr.io/puppeteer/puppeteer:22.15.0
+FROM ghcr.io/puppeteer/puppeteer:25.11.0
 
 WORKDIR /app
 USER root
