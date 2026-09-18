@@ -39,13 +39,30 @@ model User {
   createdAt    DateTime     @default(now())
   memberships  Membership[]
   comments     Comment[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+// Password reset tokens are stored hashed (never the raw token) — the same principle as
+// passwordHash on User: if the database leaks, a stolen row shouldn't itself grant
+// account takeover. The raw token only ever exists in the emailed link and briefly in
+// request memory while hashing it for lookup.
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Org {
   id             String        @id @default(cuid())
   name           String
+  slug           String?       @unique
   tier           Tier          @default(FREE)
-  customDomain   String?
   ssoEnabled     Boolean       @default(false)
   stripeCustomerId String?
   stripeSubscriptionId String?
@@ -55,6 +72,9 @@ model Org {
   assets         Asset[]
   themePresets   ThemePreset[]
   auditLogs      AuditLog[]
+  ssoConfig      SsoConfig?
+  parseJobs      DocumentParseJob[]
+  exportJobs     ExportJob[]
 }
 
 model Membership {
@@ -83,6 +103,14 @@ model Project {
   comments    Comment[]
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+
+  // "Standard web export" (product spec §11) — a hosted, shareable link at /p/[publicSlug],
+  // available on every tier including Free (unlike the downloadable "Embeddable web
+  // viewer" bundle, which is Indie Artist+ only — see ExportJob/type WEB_BUNDLE).
+  // The slug is generated once on first publish and kept stable across re-publishes so a
+  // link an artist has already shared never breaks.
+  publicSlug    String?  @unique
+  publicEnabled Boolean  @default(false)
 
   @@index([orgId])
 }
@@ -155,4 +183,80 @@ model AnalyticsEvent {
   createdAt DateTime @default(now())
 
   @@index([projectId])
+  @@index([projectId, type, createdAt])
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum ExportType {
+  PDF
+  WEB_BUNDLE
+  IMAGES
+}
+
+enum SsoProviderKind {
+  OIDC
+}
+
+// Queued job: extracts text from an uploaded lyric/liner-note document (DOCX/PDF/TXT)
+// so the editor can pre-populate an editable text block. Runs off-request in the worker
+// process (see worker/index.ts) so large files never block the API thread.
+model DocumentParseJob {
+  id           String    @id @default(cuid())
+  org          Org       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId        String
+  projectId    String
+  requestedBy  String
+  assetKey     String
+  filename     String
+  mimeType     String
+  status       JobStatus @default(QUEUED)
+  resultText   String?
+  errorMessage String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([orgId])
+  @@index([projectId])
+}
+
+// Queued job: server-rendered export (high-res PDF, static web-viewer bundle, or image
+// assets). Rendering a whole booklet can be slow, so it runs in the worker process and
+// the client polls this row for status + the resulting asset URL.
+model ExportJob {
+  id           String     @id @default(cuid())
+  org          Org        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId        String
+  projectId    String
+  requestedBy  String
+  type         ExportType
+  status       JobStatus  @default(QUEUED)
+  resultUrl    String?
+  errorMessage String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([orgId])
+  @@index([projectId])
+}
+
+// Per-org SSO configuration (Enterprise tier). One row per org, OIDC authorization-code
+// flow. clientSecret is stored encrypted at rest (see lib/crypto.ts) — never returned
+// to the client in plaintext.
+model SsoConfig {
+  id                  String          @id @default(cuid())
+  org                 Org             @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId               String          @unique
+  provider            SsoProviderKind @default(OIDC)
+  issuer              String
+  clientId            String
+  clientSecretEncrypted String
+  defaultRole         Role            @default(VIEWER)
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 }

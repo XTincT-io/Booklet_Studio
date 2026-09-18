@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { db } from "@/lib/db";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, { apiVersion: "2024-06-20" });
 
@@ -25,8 +26,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const org = await db.org.findUnique({ where: { id: orgId } });
+  if (!org) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Reuse an existing Stripe customer if this org has one (e.g. from a prior
+  // subscription), so billing history stays attached to one customer record instead of
+  // fragmenting across repeat checkouts — and so the billing portal has something to
+  // point at afterward (see /api/billing/portal).
+  let stripeCustomerId = org.stripeCustomerId;
+  if (!stripeCustomerId) {
+    const customer = await stripe.customers.create({
+      email: session.user.email ?? undefined,
+      metadata: { orgId },
+    });
+    stripeCustomerId = customer.id;
+    await db.org.update({ where: { id: orgId }, data: { stripeCustomerId } });
+  }
+
   const checkoutSession = await stripe.checkout.sessions.create({
     mode: "subscription",
+    customer: stripeCustomerId,
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: `${process.env.APP_URL}/org/${orgId}?upgraded=1`,
     cancel_url: `${process.env.APP_URL}/org/${orgId}`,

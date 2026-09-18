@@ -3,6 +3,7 @@ import type { JWT } from "next-auth/jwt";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { db } from "./db";
+import { checkRateLimit } from "./rate-limit";
 
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
@@ -15,6 +16,14 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
+
+        // Rate-limited by email rather than IP: NextAuth's credentials `authorize`
+        // doesn't reliably expose the caller's IP across versions/deployments, and
+        // per-email is exactly the thing we care about for a brute-force attempt anyway.
+        const { allowed } = await checkRateLimit(`login:${credentials.email.toLowerCase()}`, 10, 15 * 60);
+        if (!allowed) {
+          throw new Error("Too many login attempts for this account. Please wait a few minutes and try again.");
+        }
 
         const user = await db.user.findUnique({ where: { email: credentials.email } });
         if (!user || !user.passwordHash) return null;

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { logAudit } from "@/lib/audit";
 
 async function requireMembership(userId: string, orgId: string) {
   return db.membership.findUnique({ where: { userId_orgId: { userId, orgId } } });
@@ -57,5 +58,6 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   }
 
   await db.project.delete({ where: { id: params.id } });
+  await logAudit({ orgId: project.orgId, actorId: session.user.id, action: "project.deleted", targetId: project.id, meta: { name: project.name } });
   return NextResponse.json({ ok: true });
 }

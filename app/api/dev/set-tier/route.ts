@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { logAudit } from "@/lib/audit";
 import type { Tier } from "@prisma/client";
 
 /**
@@ -25,6 +26,10 @@ export async function POST(req: NextRequest) {
   });
   if (!membership || membership.role !== "ADMIN") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
+  const previous = await db.org.findUnique({ where: { id: orgId } });
   const org = await db.org.update({ where: { id: orgId }, data: { tier } });
+
+  await logAudit({ orgId, actorId: session.user.id, action: "org.tier_changed", meta: { from: previous?.tier, to: tier, via: "dev_tool" } });
+
   return NextResponse.json({ org });
 }

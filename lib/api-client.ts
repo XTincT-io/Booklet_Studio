@@ -1,4 +1,18 @@
-import type { OrgSummary, ProjectFull, ProjectSummary, PageData, ThemeData, MetadataFields } from "./types";
+import type {
+  OrgSummary,
+  ProjectFull,
+  ProjectSummary,
+  PageData,
+  ThemeData,
+  MetadataFields,
+  MemberSummary,
+  AuditLogEntry,
+  ProjectAnalytics,
+  ParseJobStatus,
+  ExportJobStatus,
+  ExportTypeKey,
+  SsoConfigSummary,
+} from "./types";
 
 class ApiError extends Error {
   status?: number;
@@ -64,7 +78,73 @@ export const api = {
 
   devSetTier: (orgId: string, tier: string) =>
     apiFetch<{ org: unknown }>("/api/dev/set-tier", { method: "POST", body: JSON.stringify({ orgId, tier }) }),
+
+  createBillingPortalSession: (orgId: string) =>
+    apiFetch<{ url: string }>("/api/billing/portal", { method: "POST", body: JSON.stringify({ orgId }) }),
+
+  // --- Standard web export (hosted public link, every tier) ---
+  getPublishStatus: (projectId: string) =>
+    apiFetch<{ publicEnabled: boolean; publicUrl: string | null }>(`/api/projects/${projectId}/publish`),
+  setPublishStatus: (projectId: string, enabled: boolean) =>
+    apiFetch<{ publicEnabled: boolean; publicUrl: string | null }>(`/api/projects/${projectId}/publish`, {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    }),
+
+  // --- Team / roster ---
+  listMembers: (orgId: string) => apiFetch<{ members: MemberSummary[] }>(`/api/orgs/${orgId}/members`),
+  addOrUpdateMember: (orgId: string, email: string, role: string) =>
+    apiFetch<{ membership: unknown }>(`/api/orgs/${orgId}/members`, { method: "POST", body: JSON.stringify({ email, role }) }),
+  removeMember: (orgId: string, membershipId: string) =>
+    apiFetch<{ ok: true }>(`/api/orgs/${orgId}/members`, { method: "DELETE", body: JSON.stringify({ membershipId }) }),
+
+  // --- Audit log ---
+  listAuditLog: (orgId: string) => apiFetch<{ logs: AuditLogEntry[] }>(`/api/orgs/${orgId}/audit-log`),
+
+  // --- Analytics ---
+  getOrgAnalytics: (orgId: string) => apiFetch<{ projects: ProjectAnalytics[] }>(`/api/orgs/${orgId}/analytics`),
+
+  // --- Document parsing (lyrics/liner-note import) ---
+  createParseJob: (projectId: string, data: { key: string; filename: string; mimeType: string }) =>
+    apiFetch<{ job: ParseJobStatus }>(`/api/projects/${projectId}/parse-jobs`, { method: "POST", body: JSON.stringify(data) }),
+  getParseJob: (jobId: string) => apiFetch<{ job: ParseJobStatus }>(`/api/parse-jobs/${jobId}`),
+
+  // --- Server-rendered export ---
+  createExportJob: (projectId: string, type: ExportTypeKey) =>
+    apiFetch<{ job: ExportJobStatus }>(`/api/projects/${projectId}/export-jobs`, { method: "POST", body: JSON.stringify({ type }) }),
+  getExportJob: (jobId: string) => apiFetch<{ job: ExportJobStatus }>(`/api/export-jobs/${jobId}`),
+
+  // --- SSO (Enterprise) ---
+  getSsoConfig: (orgId: string) => apiFetch<{ config: SsoConfigSummary | null; loginUrl: string | null }>(`/api/orgs/${orgId}/sso`),
+  saveSsoConfig: (orgId: string, data: { issuer: string; clientId: string; clientSecret: string; defaultRole: string }) =>
+    apiFetch<{ config: SsoConfigSummary }>(`/api/orgs/${orgId}/sso`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteSsoConfig: (orgId: string) => apiFetch<{ ok: true }>(`/api/orgs/${orgId}/sso`, { method: "DELETE" }),
 };
+
+/** Fire-and-forget analytics ping from the Preview Viewer — never throws, never blocks the UI. */
+export function trackEvent(projectId: string, pageId: string | null, type: "view" | "hotspot_open" | "audio_play"): void {
+  try {
+    fetch("/api/analytics/track", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId, pageId, type }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    // analytics should never break the viewer
+  }
+}
+
+/** Same as uploadFileToOrg, but also returns the storage key — needed by the lyric-import flow to enqueue a parse job. */
+export async function uploadFileToOrgWithKey(orgId: string, file: File): Promise<{ publicUrl: string; key: string }> {
+  const { uploadUrl, publicUrl, key } = await api.getUploadUrl(orgId, file.name, file.type);
+
+  const putRes = await fetch(uploadUrl, { method: "PUT", headers: { "Content-Type": file.type }, body: file });
+  if (!putRes.ok) throw new Error("Upload to storage failed");
+
+  await api.createAssetRecord({ orgId, key, url: publicUrl, type: file.type, sizeBytes: file.size });
+  return { publicUrl, key };
+}
 
 /** Uploads a file directly to the configured bucket via a presigned URL, then records it. */
 export async function uploadFileToOrg(orgId: string, file: File): Promise<string> {
