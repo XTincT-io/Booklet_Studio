@@ -7,7 +7,7 @@ import {
   MousePointer2, Link2, Palette, Eye, EyeOff, Download, ChevronLeft,
   ChevronRight, Trash2, Copy, Layers as LayersIcon, Music, Settings,
   ChevronUp, ChevronDown, X, FileJson, Printer, Lock, ArrowLeft, ArrowRight,
-  Pause, Play, LogOut, FileText, Globe, Images, type LucideIcon,
+  Pause, Play, LogOut, FileText, Globe, Images, User, type LucideIcon,
 } from "lucide-react";
 import { api, uploadFileToOrg, uploadFileToOrgWithKey, trackEvent, ApiError } from "@/lib/api-client";
 import type {
@@ -289,8 +289,10 @@ function Dashboard({
   onOpen: (id: string) => void; onPreview: (id: string) => void; onDelete: (id: string) => void; onNew: () => void;
   onOpenWorkspace: () => void;
 }) {
+  const [showAccountModal, setShowAccountModal] = useState(false);
   return (
     <div style={{ padding: "28px 32px", maxWidth: 1100, margin: "0 auto" }}>
+      {showAccountModal && <AccountModal userEmail={userEmail} onClose={() => setShowAccountModal(false)} />}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 26 }}>
         <div>
           <div style={{ fontFamily: "var(--font-display)", color: "var(--crt-amber)", fontSize: 12, letterSpacing: 3 }}>BOOKLET STUDIO</div>
@@ -316,6 +318,7 @@ function Dashboard({
           )}
           <button onClick={onOpenWorkspace} style={ghostBtnStyle}><Settings size={14} /> Team</button>
           <button onClick={onNew} style={primaryBtnStyle}><Plus size={15} /> New Release</button>
+          <button onClick={() => setShowAccountModal(true)} title="Account settings" style={iconBtnStyle}><User size={16} /></button>
           <button onClick={() => signOut({ callbackUrl: "/login" })} title={userEmail} style={iconBtnStyle}><LogOut size={16} /></button>
         </div>
       </div>
@@ -450,6 +453,80 @@ function UpgradeModal({ org, onClose, onUpgraded }: { org: OrgSummary; onClose: 
             <span style={{ fontSize: 11, color: "var(--signal-cyan)" }}>{t === org.tier ? "Current" : busy === t ? "…" : "Select"}</span>
           </button>
         ))}
+      </div>
+    </ModalShell>
+  );
+}
+
+function AccountModal({ userEmail, onClose }: { userEmail: string; onClose: () => void }) {
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [blockingOrgs, setBlockingOrgs] = useState<{ id: string; name: string; reason: string }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<"warn" | "confirm">("warn");
+
+  const handleDelete = async () => {
+    setBusy(true);
+    setError(null);
+    setBlockingOrgs(null);
+    try {
+      await api.deleteAccount(confirm);
+      await signOut({ callbackUrl: "/" });
+    } catch (e) {
+      if (e instanceof ApiError && e.details && typeof e.details === "object" && "blockingOrgs" in e.details) {
+        setBlockingOrgs((e.details as { blockingOrgs: { id: string; name: string; reason: string }[] }).blockingOrgs);
+      } else {
+        setError(e instanceof Error ? e.message : "Couldn't delete your account.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell onClose={onClose} title="Account settings">
+      <div style={{ fontSize: 13, color: "var(--ash)", marginBottom: 4 }}>Signed in as {userEmail}</div>
+      <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid var(--void-border)" }}>
+        <div style={{ fontFamily: "var(--font-display)", color: "var(--alert)", fontSize: 13, marginBottom: 8 }}>DANGER ZONE</div>
+        {step === "warn" ? (
+          <>
+            <p style={{ fontSize: 12, color: "var(--ash)", marginBottom: 14, lineHeight: 1.5 }}>
+              Permanently deletes your account. Any organization where you're the only member is deleted
+              along with all its projects. If you're the sole admin of an org with other members, you'll
+              need to promote someone else first.
+            </p>
+            <button onClick={() => setStep("confirm")} style={{ ...ghostBtnStyle, borderColor: "var(--alert)", color: "var(--alert)" }}>
+              Delete my account
+            </button>
+          </>
+        ) : (
+          <>
+            {blockingOrgs && blockingOrgs.length > 0 && (
+              <div style={{ fontSize: 12, color: "var(--alert)", marginBottom: 12 }}>
+                Can't delete yet — resolve these first:
+                {blockingOrgs.map((o) => (
+                  <div key={o.id} style={{ marginTop: 6 }}>
+                    <strong>{o.name}</strong>: {o.reason}
+                  </div>
+                ))}
+              </div>
+            )}
+            {error && <div style={{ fontSize: 12, color: "var(--alert)", marginBottom: 12 }}>{error}</div>}
+            <label style={labelStyle}>Enter your password (or email, if you use SSO) to confirm</label>
+            <input
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              style={{ ...inputStyle, width: "100%", marginTop: 6, marginBottom: 12 }}
+            />
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={handleDelete} disabled={busy || !confirm} style={{ ...primaryBtnStyle, background: "var(--alert)" }}>
+                {busy ? "Deleting…" : "Permanently delete"}
+              </button>
+              <button onClick={() => setStep("warn")} style={ghostBtnStyle}>Cancel</button>
+            </div>
+          </>
+        )}
       </div>
     </ModalShell>
   );

@@ -17,6 +17,7 @@ import type {
 class ApiError extends Error {
   status?: number;
   code?: string;
+  details?: unknown;
 }
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
@@ -30,6 +31,7 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
     const err = new ApiError(body.error || `Request failed (${res.status})`);
     err.status = res.status;
     err.code = body.code;
+    err.details = body;
     throw err;
   }
 
@@ -90,6 +92,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ enabled }),
     }),
+
+  // --- Account / org deletion ---
+  deleteAccount: (confirm: string) =>
+    apiFetch<{ ok: true }>("/api/account", { method: "DELETE", body: JSON.stringify({ confirm }) }),
+  deleteOrg: (orgId: string, confirmName: string) =>
+    apiFetch<{ ok: true }>(`/api/orgs/${orgId}`, { method: "DELETE", body: JSON.stringify({ confirmName }) }),
 
   // --- Team / roster ---
   listMembers: (orgId: string) => apiFetch<{ members: MemberSummary[] }>(`/api/orgs/${orgId}/members`),

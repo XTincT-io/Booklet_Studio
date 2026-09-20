@@ -155,7 +155,7 @@ model Comment {
   pageId    String?
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String
-  author    User     @relation(fields: [authorId], references: [id])
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
   authorId  String
   createdAt DateTime @default(now())
 

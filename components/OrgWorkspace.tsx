@@ -52,6 +52,67 @@ export function OrgWorkspace({ org, onBack, onRequestUpgrade }: { org: OrgSummar
       {tab === "analytics" && <AnalyticsPanel org={org} onRequestUpgrade={onRequestUpgrade} />}
       {tab === "audit" && <AuditLogPanel org={org} onRequestUpgrade={onRequestUpgrade} />}
       {tab === "sso" && <SsoPanel org={org} onRequestUpgrade={onRequestUpgrade} />}
+
+      {org.role === "ADMIN" && <DangerZonePanel org={org} onBack={onBack} />}
+    </div>
+  );
+}
+
+function DangerZonePanel({ org, onBack }: { org: OrgSummary; onBack: () => void }) {
+  const [confirmName, setConfirmName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const handleDelete = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.deleteOrg(org.id, confirmName);
+      onBack();
+      window.location.reload(); // simplest way to refresh the org list after deletion
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't delete this organization.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid var(--void-border)" }}>
+      <div style={{ fontFamily: "var(--font-display)", color: "var(--alert)", fontSize: 13, marginBottom: 8 }}>DANGER ZONE</div>
+      {!expanded ? (
+        <button onClick={() => setExpanded(true)} style={{ ...ghostBtnStyle, borderColor: "var(--alert)", color: "var(--alert)" }}>
+          Delete this organization
+        </button>
+      ) : (
+        <div style={{ maxWidth: 420 }}>
+          <p style={{ fontSize: 12, color: "var(--ash)", marginBottom: 12, lineHeight: 1.5 }}>
+            Permanently deletes <strong>{org.name}</strong> and every project, asset, and export job in it.
+            Only works if you're the only member — remove or reassign other teammates first. Type the
+            organization's name to confirm.
+          </p>
+          {error && <div style={{ fontSize: 12, color: "var(--alert)", marginBottom: 10 }}>{error}</div>}
+          <input
+            value={confirmName}
+            onChange={(e) => setConfirmName(e.target.value)}
+            placeholder={org.name}
+            style={{ ...inputStyle, width: "100%", marginBottom: 10 }}
+          />
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={handleDelete}
+              disabled={busy || confirmName !== org.name}
+              style={{ ...primaryBtnStyle, background: "var(--alert)", opacity: confirmName !== org.name ? 0.5 : 1 }}
+            >
+              {busy ? "Deleting…" : "Permanently delete"}
+            </button>
+            <button onClick={() => { setExpanded(false); setConfirmName(""); setError(null); }} style={ghostBtnStyle}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

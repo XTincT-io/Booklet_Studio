@@ -35,9 +35,12 @@ the full booklet editor UI wired to the API instead of local storage.
   card, backed by a real Stripe Customer created at first checkout
 - Rate limiting (Redis-backed) on signup, login, password reset, and public analytics
   ingestion
-- Security headers (`next.config.js`), a real landing page, Terms/Privacy pages (templates
-  — see below), `/api/health`, structured error logging, and CI (typecheck + build on
-  every push/PR)
+- Account self-deletion (Account settings, from the dashboard header) and org deletion
+  (Team → danger zone) — with a real safety check: you can't delete your account while
+  you're the sole admin of an org that has other members
+- Security headers including a baseline CSP (`next.config.js`), a real landing page,
+  Terms/Privacy pages (templates — see below), `/api/health`, structured error logging,
+  and CI (typecheck + tests + build on every push/PR)
 
 **Stubbed / needs your keys:**
 - Asset uploads need real AWS/S3 credentials in `.env` — without them, `POST /api/assets/upload-url`
@@ -160,6 +163,16 @@ on Node ≥22.12 (required by the Puppeteer bump below), so that part of the gro
 (`launch`, `setViewport`, `setContent`, `page.pdf`, `elementHandle.screenshot`), which hasn't
 had breaking changes across these majors. `Dockerfile.worker`'s base image was bumped to match.
 
+**Content-Security-Policy is a "baseline," not a strict one** (`next.config.js`). Both
+`script-src` and `style-src` include `'unsafe-inline'` — deliberate compromises, not
+oversights. Next.js's App Router injects inline `<script>` tags for hydration/RSC data as
+a fundamental part of how it works, and this codebase uses inline `style={{}}` React props
+extensively; eliminating either requires either full nonce-wiring through `middleware.ts`
+(which also handles auth-gating — risky to touch blind) or a full CSS-modules refactor,
+neither of which belongs in a security-headers pass. What this CSP still does block: any
+script/style/frame loading from an untrusted *external* origin, `<object>`/`<embed>`-based
+exploits, and `form-action`/`base-uri` hijacking.
+
 ## What's next
 
 Everything in the original "What's next" list now has a working implementation — Label/
@@ -178,11 +191,6 @@ Remaining polish, roughly in priority order:
   needed
 - **Legacy `.doc` files** (pre-2007 binary Word format) aren't supported for lyric import —
   `lib/parsing.ts` returns a friendly error asking for `.docx`/`.pdf`/`.txt` instead
-- **No account/org self-service deletion** — no GDPR "right to be forgotten" flow yet.
-  `/privacy` calls this out as an open item rather than promising something that isn't built.
-- **No strict Content-Security-Policy** — the other security headers are in
-  `next.config.js`, but a real CSP needs nonce wiring through the App Router's hydration
-  scripts, which wasn't done blind without a way to verify it doesn't break the build.
 
 ## Tests
 
