@@ -36,7 +36,7 @@ export async function DELETE(req: NextRequest) {
   // and should show this in their audit trail.
   const orgIdsUserRemainsRelevantTo = (
     await db.membership.findMany({ where: { userId: session.user.id }, select: { orgId: true, role: true } })
-  ).filter((m) => m.role !== "ADMIN");
+  ).filter((m: { orgId: string; role: string }) => m.role !== "ADMIN");
 
   const result = await deleteUserAccount(session.user.id);
   if (!result.ok) {

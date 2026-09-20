@@ -105,7 +105,48 @@ targets exactly that kind of host.
    each of the three export types, and confirm an audit-log entry appears for an Enterprise
    org. That exercises Postgres, S3, and both queues end to end.
 
-## Scaling the worker
+## What's actually been verified vs. what hasn't
+
+Being precise about this matters, so here's the real state rather than an optimistic one:
+
+**Verified for real, against a live Postgres 16 + Redis 7:**
+- The entire `prisma/schema.prisma` is valid SQL — every table, enum, foreign key, cascade
+  rule, unique constraint, and index was hand-transcribed to `tests/schema-validation.sql`
+  and applied successfully with zero errors.
+- The cascade-delete semantics `lib/account-deletion.ts` depends on are correct, verified
+  with real inserts/deletes: deleting a solo-owned org cascades its projects, comments,
+  and jobs but leaves the user; deleting a user directly cascades their memberships and
+  comments but — critically — does *not* touch orgs they belonged to, which is exactly
+  why solo-owned orgs need to be deleted explicitly rather than relying on the user
+  cascade alone (confirmed by reproducing the orphaned-org scenario directly).
+- JSONB columns round-trip the actual block-data shapes the editor produces.
+- Unique constraints (`Org.slug`, `Project.publicSlug`) actually reject duplicates.
+- Every file in the codebase — all API routes, components, and the worker — compiles and
+  bundles successfully under Next.js's real webpack/SWC pipeline (verified by running a
+  real `next build` with type-checking temporarily disabled as a diagnostic). Zero
+  bundling errors anywhere.
+- 28 unit tests (`npm run test`) actually execute and pass (see `tests/`).
+- Caught and fixed one genuine bug this way that no amount of manual review or
+  syntax-checking would have found: an implicit-`any` TypeScript error in
+  `app/api/account/route.ts`.
+
+**Still not verified — the one remaining wall:** an actual generated Prisma Client. This
+sandbox's network egress can't reach `binaries.prisma.sh` (confirmed exhaustively — tried
+`--no-engine`, checked for an npm-distributed binary, checked for a bundled WASM schema
+parser; none exist for this Prisma version). This means:
+- No route that touches the database has been exercised end-to-end through the actual
+  application code (only through raw SQL directly, as above).
+- `next build`'s real type-checking has never fully completed — it will very likely
+  surface more `@prisma/client`-related type errors on a machine with normal network
+  access, simply because the stale placeholder client in this sandbox doesn't know about
+  any model added this session (`DocumentParseJob`, `ExportJob`, `SsoConfig`,
+  `PasswordResetToken`, `Org.slug`, `Project.publicSlug`) — those aren't bugs, just
+  types that can't be checked here.
+- **Do not skip `npx prisma migrate dev && npm run build` on a real machine before
+  deploying this.** Everything above narrows the risk considerably, but it isn't a
+  substitute for that.
+
+
 
 `worker/index.ts` is a single process with fixed concurrency (4 for document parsing, 2
 for export — headless Chromium is memory-hungry, hence the lower number). To scale,
