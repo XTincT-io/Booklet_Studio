@@ -20,12 +20,13 @@ export const authOptions: NextAuthOptions = {
         // Rate-limited by email rather than IP: NextAuth's credentials `authorize`
         // doesn't reliably expose the caller's IP across versions/deployments, and
         // per-email is exactly the thing we care about for a brute-force attempt anyway.
-        const { allowed } = await checkRateLimit(`login:${credentials.email.toLowerCase()}`, 10, 15 * 60);
+        const email = credentials.email.toLowerCase(); // see lib/validation.ts's `email` const for why
+        const { allowed } = await checkRateLimit(`login:${email}`, 10, 15 * 60);
         if (!allowed) {
           throw new Error("Too many login attempts for this account. Please wait a few minutes and try again.");
         }
 
-        const user = await db.user.findUnique({ where: { email: credentials.email } });
+        const user = await db.user.findUnique({ where: { email } });
         if (!user || !user.passwordHash) return null;
 
         const valid = await bcrypt.compare(credentials.password, user.passwordHash);

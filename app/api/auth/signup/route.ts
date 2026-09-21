@@ -17,10 +17,31 @@ export async function POST(req: NextRequest) {
   const { email, password, name, orgName } = parsed.data;
 
   const existing = await db.user.findUnique({ where: { email } });
-  if (existing) return NextResponse.json({ error: "An account with that email already exists" }, { status: 409 });
 
-  const passwordHash = await bcrypt.hash(password, 10);
-  const user = await db.user.create({ data: { email, name, passwordHash } });
+  let user;
+  if (existing) {
+    // An admin can invite someone by email before they've ever signed up (see
+    // app/api/orgs/[orgId]/members/route.ts), which creates a User row with no
+    // password. Without this branch, that person could never actually get in: signup
+    // would reject them as "already exists," and login would reject them for having no
+    // password — a real dead end, not a hypothetical one. If they already have a
+    // password, this is a genuine duplicate signup and should still be rejected.
+    if (existing.passwordHash) {
+      return NextResponse.json({ error: "An account with that email already exists" }, { status: 409 });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    user = await db.user.update({ where: { id: existing.id }, data: { passwordHash, name: name ?? existing.name } });
+  } else {
+    const passwordHash = await bcrypt.hash(password, 10);
+    user = await db.user.create({ data: { email, name, passwordHash } });
+  }
+
+  // Someone claiming a pre-provisioned invite already has org membership(s) from being
+  // invited — creating a brand-new personal workspace for them on top of that would be
+  // surprising, not helpful. Only create one for a genuinely new signup.
+  if (existing) {
+    return NextResponse.json({ ok: true, userId: user.id, orgId: null }, { status: 201 });
+  }
 
   const finalOrgName = orgName || (name ? `${name}'s Workspace` : "My Workspace");
   const slug = await generateUniqueOrgSlug(finalOrgName);

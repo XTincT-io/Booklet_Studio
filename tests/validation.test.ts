@@ -24,9 +24,21 @@ describe("signupSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("normalizes email case (real bug: mixed-case emails from an admin invite vs. login would otherwise never match)", () => {
+    const result = signupSchema.safeParse({ email: "Artist@Example.COM", password: "longenough" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.email).toBe("artist@example.com");
+  });
+
   it("rejects a missing password", () => {
     const result = signupSchema.safeParse({ email: "artist@example.com" });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts a blank name field rather than rejecting it (real bug: React's controlled inputs send '' for an empty optional field, not undefined)", () => {
+    const result = signupSchema.safeParse({ email: "artist@example.com", password: "longenough", name: "" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.name).toBeUndefined(); // blank input should normalize to undefined, not store ""
   });
 });
 
@@ -77,9 +89,13 @@ describe("trackEventSchema", () => {
     expect(trackEventSchema.safeParse({ type: "view" }).success).toBe(false);
   });
 
-  it("pageId is optional", () => {
+  it("pageId is optional and accepts explicit null (not just an omitted field)", () => {
+    // Both the exported web-viewer bundle's vanilla JS and the React Preview Viewer send
+    // an explicit `null` for pageId in some cases, not just omit the field — this exact
+    // distinction was a real bug (plain .optional() rejects null, only allows undefined).
     expect(trackEventSchema.safeParse({ projectId: "proj_1", type: "view" }).success).toBe(true);
     expect(trackEventSchema.safeParse({ projectId: "proj_1", pageId: "page_1", type: "view" }).success).toBe(true);
+    expect(trackEventSchema.safeParse({ projectId: "proj_1", pageId: null, type: "view" }).success).toBe(true);
   });
 });
 

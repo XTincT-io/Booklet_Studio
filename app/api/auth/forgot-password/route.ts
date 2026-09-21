@@ -4,7 +4,7 @@ import { parseBody } from "@/lib/validation";
 import { createPasswordResetRequest } from "@/lib/password-reset";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
-const schema = z.object({ email: z.string().trim().email() });
+const schema = z.object({ email: z.string().trim().toLowerCase().email() }); // see lib/validation.ts's `email` const for why
 
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);

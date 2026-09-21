@@ -38,11 +38,26 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
   if (!claims.email) {
     return NextResponse.json({ error: "Your identity provider didn't return an email address, which Booklet Studio requires." }, { status: 400 });
   }
+  const email = claims.email.toLowerCase(); // see lib/validation.ts's `email` const for why
+
+  // Refuse to let SSO log into an account that already has its own independent
+  // password. Without this, an org admin's OIDC provider — which they fully control —
+  // could vouch for *any* email address, not just ones in their own organization, and
+  // silently take over an existing password-protected account elsewhere on the
+  // platform. SSO may only create new users or log into ones that were already
+  // passwordless (e.g. provisioned by an admin invite that hasn't been claimed yet).
+  const existingUser = await db.user.findUnique({ where: { email } });
+  if (existingUser?.passwordHash) {
+    return NextResponse.json(
+      { error: "This email is already registered with a password. Log in normally instead of via SSO, or contact support to link accounts." },
+      { status: 409 }
+    );
+  }
 
   const user = await db.user.upsert({
-    where: { email: claims.email },
+    where: { email },
     update: { name: claims.name ?? undefined },
-    create: { email: claims.email, name: claims.name ?? undefined },
+    create: { email, name: claims.name ?? undefined },
   });
 
   // Provision membership on first SSO login; never downgrade an existing role.

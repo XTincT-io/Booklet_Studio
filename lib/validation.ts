@@ -29,14 +29,23 @@ export async function parseBody<T extends ZodType>(
   return { data: result.data };
 }
 
-const email = z.string().trim().min(1).max(320).email();
+// Lowercased so every email-keyed lookup (signup, login, invites, password reset, SSO)
+// agrees on the same value regardless of how the user or an IdP capitalized it — Postgres
+// text equality is case-sensitive by default, so without this, "Person@Co.com" and
+// "person@co.com" would silently be treated as two different accounts.
+const email = z.string().trim().toLowerCase().min(1).max(320).email();
 const role = z.enum(["ADMIN", "DESIGNER", "COLLABORATOR", "VIEWER"]);
 
 export const signupSchema = z.object({
   email,
   password: z.string().min(8).max(200),
-  name: z.string().trim().min(1).max(200).optional(),
-  orgName: z.string().trim().min(1).max(200).optional(),
+  // React's controlled inputs send "" (not undefined) for a blank optional field — plain
+  // `.optional()` doesn't cover that, since an explicit empty string still has to pass
+  // .min(1). Transform blank/whitespace-only input to undefined instead of rejecting it,
+  // so leaving the Name field empty at signup actually works the way the UI implies it
+  // does (no `required` attribute, nothing marking it mandatory).
+  name: z.string().trim().max(200).optional().transform((v) => (v ? v : undefined)),
+  orgName: z.string().trim().max(200).optional().transform((v) => (v ? v : undefined)),
 });
 
 export const createOrgSchema = z.object({
@@ -71,7 +80,11 @@ export const exportJobSchema = z.object({
 
 export const trackEventSchema = z.object({
   projectId: z.string().min(1),
-  pageId: z.string().min(1).optional(),
+  // .nullish() (not .optional()): both the exported web-viewer bundle's vanilla JS and
+  // the React Preview Viewer can send an explicit `null` for pageId (e.g. "no page
+  // context available"), not just omit the field entirely — plain .optional() only
+  // covers `undefined` and would reject a real `null` from either caller.
+  pageId: z.string().min(1).nullish(),
   type: z.enum(["view", "hotspot_open", "audio_play"]),
 });
 
