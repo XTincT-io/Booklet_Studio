@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: booklet
+          POSTGRES_PASSWORD: booklet
+          POSTGRES_DB: booklet_studio
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U booklet -d booklet_studio"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://booklet:booklet@localhost:5432/booklet_studio
+      NEXTAUTH_SECRET: ci-only-not-a-real-secret
+      NEXTAUTH_URL: http://localhost:3000
+      SSO_ENCRYPTION_KEY: ci-only-not-a-real-secret-32bytes
+      # The web build doesn't need puppeteer's Chromium — only the worker does at runtime.
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - run: npx prisma generate
+
+      # Uses `db push` rather than `migrate deploy`: this repo has no committed
+      # migrations yet (see docs/deployment.md — the first one should be generated
+      # against a real database, not hand-written). `db push` syncs the CI database
+      # straight from schema.prisma, which is all CI needs to typecheck/build against.
+      # Once migrations exist, prefer `migrate deploy` here to also catch drift between
+      # schema.prisma and the committed migration history.
+      - run: npx prisma db push --skip-generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
