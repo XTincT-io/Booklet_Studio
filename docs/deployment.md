@@ -99,7 +99,15 @@ targets exactly that kind of host.
    no HTTP endpoint of its own to poll.
 
 8. **Configure Stripe webhooks** to point at `https://your-domain/api/billing/webhook`
-   with the signing secret in `STRIPE_WEBHOOK_SECRET`.
+   with the signing secret in `STRIPE_WEBHOOK_SECRET`. Subscribe the endpoint to exactly
+   these three events — the handler only listens for these, so anything else is ignored:
+   - `checkout.session.completed` — initial upgrade
+   - `customer.subscription.updated` — a plan change made through the Stripe Billing
+     Portal (`/api/billing/portal`) itself, e.g. Indie Artist → Indie Label, if you've
+     enabled plan-switching in the portal's configuration in the Stripe dashboard.
+     Without this, a self-serve tier change through the portal would charge correctly
+     but never actually update what the org can access.
+   - `customer.subscription.deleted` — cancellation, reverts the org to FREE
 
 9. **Smoke test**: sign up, create a project, upload an image, run a lyric import, run
    each of the three export types, and confirm an audit-log entry appears for an Enterprise
