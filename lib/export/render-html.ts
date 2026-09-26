@@ -24,6 +24,29 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Coerces a value that's supposed to be a finite number (block x/y/w/h/z, fontSize,
+ * opacity, timestamp) into one, falling back rather than trusting the input's declared
+ * type. Necessary because neither the page-update route (PATCH .../pages/[pageId]) nor
+ * the project-update route (PATCH .../projects/[id]) validate the shape of `blocks` or
+ * `theme` against a schema — they're stored as opaque JSON straight from the request
+ * body (see the allowedKeys passthrough in both routes). That's a real, separate gap
+ * worth fixing at the API layer too, but this renderer can't assume it has been:
+ * anything below treats every field as untrusted regardless of its declared TypeScript
+ * type, since TypeScript types don't survive being read back out of a JSONB column.
+ */
+function safeNum(value: unknown, fallback = 0): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Same reasoning as safeNum, for string fields — always escapes, and coerces a
+ * non-string value (or a value absent entirely) to an empty string rather than letting
+ * `undefined`/an object leak `[object Object]` or similar into the output. */
+function safeStr(value: unknown): string {
+  return escapeHtml(typeof value === "string" ? value : "");
+}
+
 function textureBackgroundImage(kind: string): string {
   if (kind === "grain" || kind === "noise" || kind === "xerox") {
     const freq = kind === "xerox" ? 0.9 : kind === "grain" ? 0.75 : 0.6;
@@ -37,26 +60,26 @@ function textureBackgroundImage(kind: string): string {
 }
 
 function renderBlock(block: BlockData, forWebViewer: boolean): string {
-  const pos = `position:absolute; left:${block.x}px; top:${block.y}px; width:${block.w}px; height:${block.h}px; z-index:${block.z};`;
+  const pos = `position:absolute; left:${safeNum(block.x)}px; top:${safeNum(block.y)}px; width:${safeNum(block.w)}px; height:${safeNum(block.h)}px; z-index:${safeNum(block.z)};`;
   if (block.hidden) return "";
 
   switch (block.type) {
     case "text":
-      return `<div style="${pos} font-family:'${escapeHtml(block.fontFamily)}',sans-serif; font-size:${block.fontSize}px; font-weight:${block.fontWeight}; color:${block.color}; text-align:${block.align}; white-space:pre-wrap; overflow:hidden;">${escapeHtml(block.content)}</div>`;
+      return `<div style="${pos} font-family:'${safeStr(block.fontFamily)}',sans-serif; font-size:${safeNum(block.fontSize)}px; font-weight:${safeStr(block.fontWeight)}; color:${safeStr(block.color)}; text-align:${safeStr(block.align)}; white-space:pre-wrap; overflow:hidden;">${safeStr(block.content)}</div>`;
 
     case "image":
-      return `<div style="${pos} overflow:hidden;"><img src="${escapeHtml(block.src)}" style="width:100%; height:100%; object-fit:${block.fit}; opacity:${block.opacity};" /></div>`;
+      return `<div style="${pos} overflow:hidden;"><img src="${safeStr(block.src)}" style="width:100%; height:100%; object-fit:${safeStr(block.fit)}; opacity:${safeNum(block.opacity, 1)};" /></div>`;
 
     case "shape":
-      return `<div style="${pos} background:${block.fill}; opacity:${block.opacity}; border-radius:${block.shape === "circle" ? "50%" : "0"};"></div>`;
+      return `<div style="${pos} background:${safeStr(block.fill)}; opacity:${safeNum(block.opacity, 1)}; border-radius:${block.shape === "circle" ? "50%" : "0"};"></div>`;
 
     case "hotspot":
       if (!forWebViewer) return ""; // hotspots are interactive-only; static PDF/image export skips them
-      return `<div class="bs-hotspot" data-note="${escapeHtml(block.note)}" data-linked-audio="${escapeHtml(block.linkedAudioId)}" data-timestamp="${block.timestamp}" style="${pos} cursor:pointer;" title="${escapeHtml(block.label)}"></div>`;
+      return `<div class="bs-hotspot" data-note="${safeStr(block.note)}" data-linked-audio="${safeStr(block.linkedAudioId)}" data-timestamp="${safeNum(block.timestamp)}" style="${pos} cursor:pointer;" title="${safeStr(block.label)}"></div>`;
 
     case "audio":
       if (!forWebViewer) return ""; // audio can't render into a static PDF/image page
-      return `<div style="${pos}"><button class="bs-audio-toggle" data-audio-id="${block.id}" style="width:100%; height:100%; border:1px solid #2a2a35; border-radius:8px; background:#1c1c25; color:#e7e7ec; font-size:12px;">▶ ${escapeHtml(block.label)}</button><audio id="audio-${block.id}" src="${escapeHtml(block.src)}" preload="none"></audio></div>`;
+      return `<div style="${pos}"><button class="bs-audio-toggle" data-audio-id="${safeStr(block.id)}" style="width:100%; height:100%; border:1px solid #2a2a35; border-radius:8px; background:#1c1c25; color:#e7e7ec; font-size:12px;">▶ ${safeStr(block.label)}</button><audio id="audio-${safeStr(block.id)}" src="${safeStr(block.src)}" preload="none"></audio></div>`;
 
     default:
       return "";
@@ -64,9 +87,11 @@ function renderBlock(block: BlockData, forWebViewer: boolean): string {
 }
 
 function renderPage(page: PageData, project: ProjectFull, dims: { w: number; h: number }, forWebViewer: boolean, pageIndex: number): string {
-  const blocksHtml = [...page.blocks].sort((a, b) => a.z - b.z).map((b) => renderBlock(b, forWebViewer)).join("\n");
+  const blocksHtml = [...page.blocks].sort((a, b) => safeNum(a.z) - safeNum(b.z)).map((b) => renderBlock(b, forWebViewer)).join("\n");
   const pageClass = forWebViewer ? "bs-page" : "bs-print-page";
-  return `<section class="${pageClass}" data-page-index="${pageIndex}" data-page-id="${page.id}" style="position:relative; width:${dims.w}px; height:${dims.h}px; background:${project.theme.bg}; background-image:${textureBackgroundImage(project.theme.texture)}; overflow:hidden;">
+  // page.id is a database-generated cuid (Prisma @default(cuid())), not part of the
+  // request body the page-update route accepts — safe to interpolate directly.
+  return `<section class="${pageClass}" data-page-index="${pageIndex}" data-page-id="${page.id}" style="position:relative; width:${dims.w}px; height:${dims.h}px; background:${safeStr(project.theme.bg)}; background-image:${textureBackgroundImage(project.theme.texture)}; overflow:hidden;">
     ${blocksHtml}
   </section>`;
 }

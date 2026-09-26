@@ -138,6 +138,24 @@ specific code to show the upgrade modal rather than a generic error toast.
 
 ## Known security exceptions
 
+**Fixed, but worth understanding:** `PATCH /api/projects/[id]/pages/[pageId]` and
+`PATCH /api/projects/[id]` both store `blocks`/`theme` as opaque JSON straight from the
+request body — neither validates its shape against a schema (see the `allowedKeys`
+passthrough in each route). Combined with `/p/[slug]` serving `lib/export/render-html.ts`'s
+output as unescaped `text/html` to unauthenticated public visitors, an unvalidated field
+like a block's `color` or a theme's `bg` reaching that renderer unescaped would have been
+a real stored-XSS path — not hypothetical, exploitable by any COLLABORATOR-role member,
+against anyone who opens that project's public link. **The renderer itself is now hardened**
+(every interpolated field is escaped or numerically coerced regardless of its declared
+type, proven by `tests/render-html-security.test.ts` actually injecting payloads and
+asserting they don't survive) — but the two API routes above still accept unvalidated
+JSON for `blocks`/`theme`. That's defense-in-depth working as intended (the layer that
+actually mattered, the one serving raw HTML to the public, is fixed), not a reason to
+skip adding real schema validation at the API layer too — it's still the more correct fix,
+just a larger one (the block union type is non-trivial to express fully in zod), and
+worth doing as a follow-up rather than trusting the renderer to be the only safety net
+forever.
+
 **Next.js is intentionally pinned at 14.2.35, not upgraded to 16.x, despite two open advisories**
 (1 critical, 1 high — see `npm audit`; GitHub's Dependabot PR #1 on this repo proposes the
 same bump). This is a deliberate decision, not an oversight:
@@ -182,6 +200,14 @@ Remaining polish, roughly in priority order:
 - **SSO** currently supports OIDC only (no SAML) and provisions one default role per org
   on first sign-in — per-IdP-group role mapping would be the next step for larger Enterprise
   customers
+- **No upload size limit anywhere in the pipeline** — presigned PUT URLs
+  (`lib/storage.ts`'s `createUploadUrl`) don't cap size the way presigned POST policies
+  can, and there's no client- or server-side check either. `downloadObject` now refuses
+  anything over 25MB (protects the worker from an OOM crash on a huge lyric-import file —
+  see `lib/storage.ts`), but that's a narrow fix for the one place a giant file could
+  crash a process; images/audio can still be uploaded at any size, which is a cost and
+  abuse-surface concern worth a real fix (switching to presigned POST with a
+  `content-length-range` condition, or a client-side pre-check) if this goes further.
 - **Export job UI** is poll-based (2s interval, 2min timeout) rather than websocket-pushed;
   fine at current volume, worth revisiting if export jobs start queueing up
 - **Analytics** is unsampled and unbounded — add retention/rollup once event volume justifies it
