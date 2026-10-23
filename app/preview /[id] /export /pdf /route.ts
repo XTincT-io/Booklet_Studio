@@ -1,42 +1,96 @@
 import { NextRequest, NextResponse } from "next/server";
-import { chromium } from "playwright";
+import { Browser, chromium } from "playwright";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { hasFeature } from "@/lib/entitlements";
 import { db } from "@/lib/db";
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+let browserPromise: Promise<Browser> | null = null;
 
-  const project = await db.project.findUnique({ where: { id: params.id }, include: { org: true } });
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  // Tier Check: HQ Export is a paid feature
-  if (!hasFeature(project.org.tier, "hq_export")) {
-    return NextResponse.json({ error: "HQ PDF Export requires Indie Artist tier or higher", code: "TIER_LIMIT" }, { status: 402 });
+async function getBrowser(): Promise<Browser> {
+  if (!browserPromise) {
+    browserPromise = chromium.launch({
+      headless: true,
+      args: ["--disable-dev-shm-usage", "--no-sandbox"],
+    });
   }
 
-  const browser = await chromium.launch();
+  return browserPromise;
+}
+
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const project = await db.project.findUnique({
+    where: { id: params.id },
+    include: { org: true },
+  });
+
+  if (!project) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (!hasFeature(project.org.tier, "hq_export")) {
+    return NextResponse.json(
+      {
+        error: "HQ PDF Export requires Indie Artist tier or higher",
+        code: "TIER_LIMIT",
+      },
+      { status: 402 },
+    );
+  }
+
+  const browser = await getBrowser();
   const page = await browser.newPage();
-  
-  // Navigate to the standalone preview page
-  const previewUrl = `${process.env.APP_URL}/preview/${params.id}`;
-  await page.goto(previewUrl, { waitUntil: "networkidle" });
+  const previewUrl = new URL(`/preview/${encodeURIComponent(params.id)}`, req.nextUrl.origin).toString();
+  const safeFileName = project.name.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "project";
 
-  // Generate PDF
-  const pdfBuffer = await page.pdf({
-    format: "A4",
-    printBackground: true,
-    margin: { top: 0, right: 0, bottom: 0, left: 0 },
-  });
+  try {
+    await page.route("**/*", async (route) => {
+      const resourceType = route.request().resourceType();
 
-  await browser.close();
+      if (["image", "font", "media"].includes(resourceType)) {
+        await route.abort();
+        return;
+      }
 
-  return new Response(pdfBuffer, {
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${project.name.replace(/\s+/g, "_")}.pdf"`,
-    },
-  });
+      await route.continue();
+    });
+
+    await page.goto(previewUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+
+    await page.waitForSelector("[data-pdf-ready='true']", { timeout: 15_000 }).catch(() => undefined);
+
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      preferCSSPageSize: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      timeout: 30_000,
+    });
+
+    return new Response(pdfBuffer, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${safeFileName}.pdf"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  } catch (error) {
+    console.error("Project preview PDF export failed", {
+      projectId: params.id,
+      previewUrl,
+      error,
+    });
+
+    return NextResponse.json({ error: "Failed to generate PDF export" }, { status: 500 });
+  } finally {
+    await page.close();
+  }
 }
