@@ -42,19 +42,19 @@ model User {
 }
 
 model Org {
-  id             String        @id @default(cuid())
-  name           String
-  tier           Tier          @default(FREE)
-  customDomain   String?
-  ssoEnabled     Boolean       @default(false)
-  stripeCustomerId String?
+  id                 String        @id @default(cuid())
+  name               String
+  tier               Tier          @default(FREE)
+  customDomain       String?
+  ssoEnabled         Boolean       @default(false)
+  stripeCustomerId   String?
   stripeSubscriptionId String?
-  createdAt      DateTime      @default(now())
-  memberships    Membership[]
-  projects       Project[]
-  assets         Asset[]
-  themePresets   ThemePreset[]
-  auditLogs      AuditLog[]
+  createdAt          DateTime      @default(now())
+  memberships        Membership[]
+  projects          Project[]
+  assets            Asset[]
+  themePresets      ThemePreset[]
+  auditLogs         AuditLog[]
 }
 
 model Membership {
@@ -66,36 +66,41 @@ model Membership {
   orgId   String
 
   @@unique([userId, orgId])
-}
-
-model Project {
-  id          String        @id @default(cuid())
-  name        String
-  artist      String?
-  formatId    String
-  status      ReleaseStatus @default(DRAFT)
-  releaseDate DateTime?
-  metadata    Json
-  theme       Json
-  org         Org           @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  orgId       String
-  pages       Page[]
-  comments    Comment[]
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-
   @@index([orgId])
 }
 
-model Page {
-  id        String  @id @default(cuid())
-  name      String
-  order     Int
-  blocks    Json
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectId String
+model Project {
+  id             String          @id @default(cuid())
+  name           String
+  artist         String?
+  formatId       String
+  status         ReleaseStatus   @default(DRAFT)
+  releaseDate    DateTime?
+  metadata       Json
+  theme          Json
+  org            Org             @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  orgId          String
+  pages          Page[]
+  comments       Comment[]
+  analyticsEvents AnalyticsEvent[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
-  @@index([projectId])
+  @@index([orgId])
+  @@index([orgId, updatedAt])
+}
+
+model Page {
+  id              String          @id @default(cuid())
+  name            String
+  order           Int
+  blocks          Json
+  project         Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId       String
+  comments        Comment[]
+  analyticsEvents AnalyticsEvent[]
+
+  @@index([projectId, order])
 }
 
 model Asset {
@@ -109,6 +114,7 @@ model Asset {
   createdAt DateTime @default(now())
 
   @@index([orgId])
+  @@index([orgId, createdAt])
 }
 
 model ThemePreset {
@@ -125,13 +131,17 @@ model Comment {
   id        String   @id @default(cuid())
   body      String
   pageId    String?
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectId String
-  author    User     @relation(fields: [authorId], references: [id])
   authorId  String
   createdAt DateTime @default(now())
 
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author    User     @relation(fields: [authorId], references: [id])
+  page      Page?    @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
   @@index([projectId])
+  @@index([projectId, createdAt])
+  @@index([pageId])
 }
 
 model AuditLog {
@@ -145,6 +155,7 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([orgId])
+  @@index([orgId, createdAt])
 }
 
 model AnalyticsEvent {
@@ -154,5 +165,10 @@ model AnalyticsEvent {
   type      String
   createdAt DateTime @default(now())
 
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  page      Page?    @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
   @@index([projectId])
+  @@index([projectId, createdAt])
+  @@index([pageId])
 }
