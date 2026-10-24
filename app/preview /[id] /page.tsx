@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import PreviewViewer from "@/components/PreviewViewerStandalone"; // We'll create this next
+import PreviewViewer from "@/components/PreviewViewerStandalone";
 import { notFound } from "next/navigation";
 
 export default async function PublicPreviewPage({ params }: { params: { id: string } }) {
