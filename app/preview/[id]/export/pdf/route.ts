@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Browser, chromium } from "playwright";
+import { Browser, chromium, type Route } from "playwright";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { hasFeature } from "@/lib/entitlements";
@@ -49,6 +49,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const safeFileName = project.name.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "project";
 
   try {
+    await page.route("**/*", async (route: Route) => {
+      const resourceType = route.request().resourceType();
+
+      if (["image", "font", "media"].includes(resourceType)) {
+        await route.abort();
+        return;
+      }
+
+      await route.continue();
+    });
+
     await page.goto(previewUrl, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,
