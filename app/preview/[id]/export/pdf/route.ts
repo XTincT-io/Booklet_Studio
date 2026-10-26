@@ -5,6 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { hasFeature } from "@/lib/entitlements";
 import { db } from "@/lib/db";
 
+export const dynamic = "force-dynamic";
+
 let browserPromise: Promise<Browser> | null = null;
 
 async function getBrowser(): Promise<Browser> {
